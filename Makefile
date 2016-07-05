@@ -1,3 +1,8 @@
+PROJECT       ?= skoap
+VERSION       ?= $(shell git describe --tags --always --dirty)
+IMAGE         ?= pierone.stups.zalan.do/teapot/$(PROJECT)
+TAG           ?= $(VERSION)
+
 default: test.test
 
 all: clean build.linux build.osx build.win
@@ -52,9 +57,10 @@ build.service.local: prepare
 
 # docker
 build.docker: build.linux build.scmfile
-	docker build -t skoap .
-	docker tag skoap gcr.io/zalando-teapot/skoap:latest
-	gcloud docker -- push gcr.io/zalando-teapot/skoap:latest
+	docker build -t "$(IMAGE):$(TAG)" .
+
+build.push: build.docker
+	docker push "$(IMAGE):$(TAG)"
 
 # OS specific builds
 build.linux: prepare
