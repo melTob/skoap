@@ -14,8 +14,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zalando-incubator/skoap"
 	"github.com/Sirupsen/logrus"
+	"github.com/zalando-incubator/skoap"
 	"github.com/zalando/skipper"
 	"github.com/zalando/skipper/eskip"
 	"github.com/zalando/skipper/filters"
@@ -26,6 +26,9 @@ import (
 
 const (
 	addressFlag        = "address"
+	defaultEtcdPrefix  = "/skipper"
+	etcdPrefixFlag     = "etcd-prefix"
+	etcdUrlsFlag       = "etcd-urls"
 	targetAddressFlag  = "target-address"
 	preserveHeaderFlag = "preserve-header"
 	realmFlag          = "realm"
@@ -72,7 +75,9 @@ https://github.com/zalando/skipper
 
 `
 
-	addressUsage = `network address that skoap should listen on`
+	addressUsage    = `network address that skoap should listen on`
+	etcdUrlsUsage   = "urls of nodes in an etcd cluster, storing route definitions"
+	etcdPrefixUsage = "path prefix for skipper related data in etcd"
 
 	targetAddressUsage = `when authenticating to a single network endpoint, set its address (without path) as
 the -target-address`
@@ -121,6 +126,8 @@ var fs *flag.FlagSet
 
 var (
 	address             string
+	etcdUrls            string
+	etcdPrefix          string
 	targetAddress       string
 	preserveHeader      bool
 	realm               string
@@ -156,6 +163,8 @@ func init() {
 	fs.Usage = usage
 
 	fs.StringVar(&address, addressFlag, defaultAddress, addressUsage)
+	fs.StringVar(&etcdUrls, etcdUrlsFlag, "", etcdUrlsUsage)
+	fs.StringVar(&etcdPrefix, etcdPrefixFlag, defaultEtcdPrefix, etcdPrefixUsage)
 	fs.StringVar(&targetAddress, targetAddressFlag, "", targetAddressUsage)
 	fs.BoolVar(&preserveHeader, preserveHeaderFlag, false, preserveHeaderUsage)
 	fs.StringVar(&realm, realmFlag, "", realmUsage)
@@ -194,12 +203,21 @@ func main() {
 		logrus.SetLevel(logrus.WarnLevel)
 	}
 
-	if targetAddress == "" && routesFile == "" {
-		logUsage("either the target address or a routes file needs to be specified")
+	if targetAddress == "" && routesFile == "" && etcdUrls == "" {
+		logUsage("either the target address, a routes file or etcd urls needs to be specified")
 	}
 
-	if targetAddress != "" && routesFile != "" {
-		logUsage("cannot set both the target address and a routes file")
+	// check that only one of targetAddress, routesFile and etcdUrls is
+	// defined
+	defined := 0
+	for _, f := range []string{targetAddress, routesFile, etcdUrls} {
+		if f != "" {
+			defined++
+		}
+	}
+
+	if defined > 1 {
+		logUsage("can only set one of: target address, etcd urls, or a routes file")
 	}
 
 	singleRouteMode := targetAddress != ""
@@ -227,7 +245,8 @@ func main() {
 	}
 
 	o := skipper.Options{
-		Address: address,
+		Address:    address,
+		EtcdPrefix: etcdPrefix,
 		CustomFilters: []filters.Spec{
 			skoap.NewAuth(authUrlBase),
 			skoap.NewAuthTeam(authUrlBase, teamUrlBase),
@@ -244,8 +263,14 @@ func main() {
 		o.ProxyOptions |= proxy.OptionsInsecure
 	}
 
-	if targetAddress == "" {
+	if routesFile != "" {
 		o.RoutesFile = routesFile
+	} else if etcdUrls != "" {
+		var eus []string
+		if len(etcdUrls) > 0 {
+			eus = strings.Split(etcdUrls, ",")
+		}
+		o.EtcdUrls = eus
 	} else {
 		var filterArgs []interface{}
 		if realm != "" {
